@@ -1,0 +1,22 @@
+{
+    "_base": "https://github.com/TimEwing/bakery/tree/main/hat_samples",
+    "ceilinonthe": ["ceilinonthe/ceilinonthe.mp3"],
+    "climbup": ["climbup/climbup.mp3"],
+    "dancinonthe": ["dancinonthe/dancinonthe.mp3"],
+    "purplehat": ["purplehat/purplehat.mp3"],
+    "purple": ["purple/purple.mp3"],
+    "hanginfromthe": ["hanginfromthe/hanginfromthe.mp3"],
+    "igot": ["igot/igot.mp3"],
+    "cheetahprint": ["cheetahprint/cheetahprint.mp3"],
+    "people": ["people/people.mp3"],
+    "myheadhitstheroof": ["myheadhitstheroof/myheadhitstheroof.mp3"],
+    "attheafter": ["attheafter/attheafter.mp3"],
+    "onthebooth": ["onthebooth/onthebooth.mp3"],
+    "co2": ["co2/co2.mp3"],
+    "hat": ["hat/hat.mp3"],
+    "peoplerolledup": ["peoplerolledup/peoplerolledup.mp3"],
+    "seemeseeyou": ["seemeseeyou/seemeseeyou.mp3"],
+    "joint": ["joint/joint.mp3"],
+    "dancin": ["dancin/dancin.mp3"],
+    "smokin": ["smokin/smokin.mp3"]
+}
