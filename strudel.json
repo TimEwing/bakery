@@ -1,5 +1,5 @@
 {
-    "_base": "https://raw.githubusercontent.com/TimEwing/bakery/main/",
+    "_base": "https://raw.githubusercontent.com/TimEwing/bakery/main/samples",
     "ceilinonthe": ["hat_samples/ceilinonthe/ceilinonthe.mp3"],
     "climbup": ["hat_samples/climbup/climbup.mp3"],
     "dancinonthe": ["hat_samples/dancinonthe/dancinonthe.mp3"],
@@ -18,5 +18,6 @@
     "seemeseeyou": ["hat_samples/seemeseeyou/seemeseeyou.mp3"],
     "joint": ["hat_samples/joint/joint.mp3"],
     "dancin": ["hat_samples/dancin/dancin.mp3"],
-    "smokin": ["hat_samples/smokin/smokin.mp3"]
+    "smokin": ["hat_samples/smokin/smokin.mp3"],
+    "computer": ["television/computer.mp3"]
 }
