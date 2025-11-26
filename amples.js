@@ -17,6 +17,12 @@ _darude_dude: arrange(
 .s("sqr,saw").dist("2:.18").strans("0,7").clip(.5).room(.5)
 .gain(0.4).lp(6000)
 
+_darude_chords: chord("Em@2 C [G D]".slow(2))
+.struct("x [~ x]!3 [x ~ ~ x] [~ x] [x ~ ~ x] [~ x]".slow(2))
+.voicing()
+.s("supersaw").rel(.8).dec(.4).room(.2).postgain(.8)
+.mask("<1!32 0!4 1!28>")
+
 _soundsLikeATrumpetOrSomething: n("0 5 ~ ~")
 .chord("Cdim".slow(8))
 .anchor("C4,C5")
