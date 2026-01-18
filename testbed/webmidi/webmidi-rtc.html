@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebMIDI over WebRTC</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0f0f0f;
+            color: #e0e0e0;
+        }
+        .container {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #00ff88;
+            margin-top: 0;
+        }
+        .section {
+            margin: 25px 0;
+            padding: 20px;
+            background: #252525;
+            border-radius: 8px;
+        }
+        .id-display {
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            padding: 15px;
+            background: #0a0a0a;
+            border: 2px solid #00ff88;
+            border-radius: 6px;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #444;
+            border-radius: 6px;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            box-sizing: border-box;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #00ff88;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background: #00ff88;
+            color: #0a0a0a;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #00dd77;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+        .status.connected {
+            background: #004d2a;
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+        .status.disconnected {
+            background: #4d1a00;
+            color: #ff8800;
+            border: 1px solid #ff8800;
+        }
+        .status.error {
+            background: #4d0000;
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+        .device-list {
+            margin-top: 10px;
+        }
+        .device {
+            padding: 8px;
+            background: #0a0a0a;
+            border-left: 3px solid #00ff88;
+            margin: 5px 0;
+            border-radius: 3px;
+        }
+        .warning {
+            background: #4d3400;
+            border: 1px solid #ff8800;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        .warning strong {
+            color: #ffaa00;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎹 WebMIDI over WebRTC</h1>
+        
+        <div class="warning">
+            <strong>⚠️ Chrome Setup Required:</strong> Enable WebMIDI at <code>chrome://flags/#enable-web-midi</code> and relaunch Chrome. 
+            If you plug in new MIDI devices, you must relaunch Chrome (not just the tab) for them to be detected.
+        </div>
+
+        <div class="section">
+            <h2>Your Peer ID</h2>
+            <div class="id-display" id="myId">Initializing...</div>
+            <p>Share this ID with your buddy to connect.</p>
+        </div>
+
+        <div class="section">
+            <h2>Connect to Peer</h2>
+            <input type="text" id="peerId" placeholder="Enter your buddy's Peer ID">
+            <button id="connectBtn" onclick="connectToPeer()">Connect</button>
+        </div>
+
+        <div class="section">
+            <h2>Connection Status</h2>
+            <div class="status disconnected" id="status">Not connected</div>
+        </div>
+
+        <div class="section">
+            <h2>Local MIDI Devices</h2>
+            <div class="device-list" id="localDevices">Scanning...</div>
+        </div>
+
+        <div class="section">
+            <h2>Activity Log</h2>
+            <div id="log" style="font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
+    <script>
+        let peer;
+        let conn;
+        let midiAccess;
+        let localInputs = [];
+        let localOutputs = [];
+
+        // Initialize PeerJS
+        function initPeer() {
+            peer = new Peer();
+            
+            peer.on('open', (id) => {
+                document.getElementById('myId').textContent = id;
+                log('Peer initialized with ID: ' + id);
+            });
+
+            peer.on('connection', (connection) => {
+                log('Incoming connection from: ' + connection.peer);
+                setupConnection(connection);
+            });
+
+            peer.on('error', (err) => {
+                log('Peer error: ' + err.message, 'error');
+                updateStatus('Error: ' + err.message, 'error');
+            });
+        }
+
+        // Connect to peer
+        function connectToPeer() {
+            const peerId = document.getElementById('peerId').value.trim();
+            if (!peerId) {
+                alert('Please enter a Peer ID');
+                return;
+            }
+            
+            log('Connecting to: ' + peerId);
+            conn = peer.connect(peerId);
+            setupConnection(conn);
+        }
+
+        // Setup connection handlers
+        function setupConnection(connection) {
+            conn = connection;
+
+            conn.on('open', () => {
+                log('Connection established!');
+                updateStatus('Connected to ' + conn.peer, 'connected');
+                document.getElementById('connectBtn').disabled = true;
+            });
+
+            conn.on('data', (data) => {
+                // Receive MIDI data from peer and send to local outputs
+                if (data.type === 'midi') {
+                    localOutputs.forEach(output => {
+                        output.send(data.message, data.timestamp);
+                    });
+                    log('↓ Received MIDI: ' + JSON.stringify(data.message));
+                }
+            });
+
+            conn.on('close', () => {
+                log('Connection closed');
+                updateStatus('Disconnected', 'disconnected');
+                document.getElementById('connectBtn').disabled = false;
+            });
+
+            conn.on('error', (err) => {
+                log('Connection error: ' + err.message, 'error');
+            });
+        }
+
+        // Initialize WebMIDI
+        async function initMIDI() {
+            if (!navigator.requestMIDIAccess) {
+                log('WebMIDI not supported in this browser!', 'error');
+                updateStatus('WebMIDI not supported', 'error');
+                return;
+            }
+
+            try {
+                midiAccess = await navigator.requestMIDIAccess();
+                log('WebMIDI initialized');
+                
+                // Setup MIDI inputs
+                midiAccess.inputs.forEach(input => {
+                    localInputs.push(input);
+                    input.onmidimessage = (msg) => {
+                        // Send MIDI data to peer
+                        if (conn && conn.open) {
+                            conn.send({
+                                type: 'midi',
+                                message: Array.from(msg.data),
+                                timestamp: msg.timeStamp
+                            });
+                            log('↑ Sent MIDI: ' + JSON.stringify(Array.from(msg.data)));
+                        }
+                    };
+                });
+
+                // Setup MIDI outputs
+                midiAccess.outputs.forEach(output => {
+                    localOutputs.push(output);
+                });
+
+                displayDevices();
+                
+                // Listen for device changes
+                midiAccess.onstatechange = () => {
+                    log('MIDI device state changed');
+                    displayDevices();
+                };
+
+            } catch (err) {
+                log('Failed to initialize MIDI: ' + err.message, 'error');
+                updateStatus('MIDI Error: ' + err.message, 'error');
+            }
+        }
+
+        // Display local MIDI devices
+        function displayDevices() {
+            const deviceList = document.getElementById('localDevices');
+            let html = '';
+
+            if (localInputs.length === 0 && localOutputs.length === 0) {
+                html = '<p style="color: #888;">No MIDI devices found. Make sure devices are connected and Chrome has been relaunched.</p>';
+            } else {
+                if (localInputs.length > 0) {
+                    html += '<h3 style="margin-top:0;">Inputs (sending to peer):</h3>';
+                    localInputs.forEach(input => {
+                        html += `<div class="device">📥 ${input.name}</div>`;
+                    });
+                }
+                
+                if (localOutputs.length > 0) {
+                    html += '<h3>Outputs (receiving from peer):</h3>';
+                    localOutputs.forEach(output => {
+                        html += `<div class="device">📤 ${output.name}</div>`;
+                    });
+                }
+            }
+
+            deviceList.innerHTML = html;
+        }
+
+        // Logging
+        function log(message, type = 'info') {
+            const logEl = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#ff4444' : '#888';
+            logEl.innerHTML += `<div style="color:${color}">[${time}] ${message}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        // Update status display
+        function updateStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+        }
+
+        // Initialize everything on load
+        window.addEventListener('load', () => {
+            initPeer();
+            initMIDI();
+        });
+    </script>
+</body>
+</html>
