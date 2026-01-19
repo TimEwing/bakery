@@ -9,7 +9,8 @@ const CONFIG = {
 };
 
 let midiState = {};
-let peer, conn, myPeerId;
+let peer = null;
+let connections = {};
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -36,10 +37,10 @@ const systemLog = (msg) => {
     logEl.scrollTop = logEl.scrollHeight;
 };
 
-let copyPeerId = () => navigator.clipboard.writeText(myPeerId);
+let copyPeerId = () => null === peer ? null : navigator.clipboard.writeText(peer.id);
 
 /**
- * WEBRTC LOGIC
+ * WEBRTC MESH LOGIC
  */
 function setupPeer() {
     peer = new Peer();
@@ -47,37 +48,81 @@ function setupPeer() {
     peer.on('open', id => {
         myPeerId = id;
         document.getElementById("my-id").textContent = id;
-        systemLog("PeerJS Ready.");
+        systemLog(`My Peer ID: ${id}`);
     });
 
     peer.on('connection', (incomingConn) => {
-        handleConnection(incomingConn);
+        registerConnection(incomingConn);
     });
 }
 
-function connectToPeer() {
-    const remoteId = document.getElementById("peer-id-input").value;
-    if (!remoteId) return;
+function connectToPeer(targetId = null) {
+    const remoteId = targetId || document.getElementById("peer-id-input").value;
+    if (!remoteId || connections[remoteId] || remoteId === peer.id) return;
     
     const newConn = peer.connect(remoteId);
-    handleConnection(newConn);
+    registerConnection(newConn);
 }
 
-function handleConnection(connection) {
-    conn = connection;
+function registerConnection(conn) {
     systemLog(`Connecting to: ${conn.peer}...`);
 
     conn.on('open', () => {
-        systemLog("Connected!");
+        systemLog(`Connected to: ${conn.peer}`);
+        connections[conn.peer] = conn;
+        
+        // Send current full state
         conn.send({ type: 'FULL_STATE', data: midiState });
+        
+        // Share peer connections (mesh)
+        const peerList = Object.keys(connections).concat([peer.id]);
+        conn.send({ type: 'PEER_LIST', data: peerList });
     });
 
     conn.on('data', (payload) => {
-        if (payload.type === 'UPDATE') {
+        handleIncomingData(payload, conn.peer);
+    });
+    
+    conn.on('close', () => {
+        systemLog(`Connection closed: ${conn.peer}`);
+        delete connections[conn.peer];
+    });
+    
+    conn.on('error', (err) => {
+        systemLog(`Connection error with ${conn.peer}: ${err}`);
+        delete connections[conn.peer];
+    });
+}
+
+function handleIncomingData(payload, senderId) {
+    switch (payload.type) {
+        case 'UPDATE':
             midiState[payload.note] = payload.velocity;
-        } else if (payload.type === 'FULL_STATE') {
-            // midiState = payload.data;
+            break;
+        case 'FULL_STATE':
             Object.assign(midiState, payload.data);
+            break;
+        case 'PEER_LIST':
+            systemLog(`Received peer list from ${senderId}: ${payload.data.join(", ")}`);
+            payload.data.forEach(id => {
+                if (id !== peer.id && !connections[id]) {
+                    systemLog(`Discovered peer: ${id}, connecting...`);
+                    connectToPeer(id);
+                }
+            });
+            break;
+        default:
+            systemLog(`Unknown payload type: ${payload.type} from ${senderId}`);
+    }
+}
+
+/**
+ * BROADCAST LOGIC
+ */
+function broadcast(payload) {
+    Object.values(connections).forEach(conn => {
+        if (conn.open) {
+            conn.send(payload);
         }
     });
 }
@@ -106,10 +151,8 @@ function handleMidiMessage(msg) {
     if (command === 176) {
         midiState[note] = velocity;
 
-        // Sync to peer
-        if (conn && conn.open) {
-            conn.send({ type: 'UPDATE', note, velocity });
-        }
+        // Sync to peers
+        broadcast({ type: 'UPDATE', note, velocity });
     }
 }
 
