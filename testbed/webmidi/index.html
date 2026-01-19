@@ -4,16 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebMidi Testbed</title>
+    <link rel="stylesheet" href="style.css">
 </head>
-<body style="margin:0;overflow:hidden;background:#111;color:white;font-family:monospace;">
-    <canvas id="game"></canvas>
+<body>
+    <header>
+        <div class="brand">
+            <h1>WebMidi <span>Testbed</span></h1>
+        </div>
+        <form id="rtc-controls" onsubmit="connectToPeer()" action="javascript:void(0);">
+            <div class="status-item">Your ID: <span id="my-id" onclick="copyPeerId()">loading...</span></div>
+            <input id="peer-id-input" placeholder="Enter peer ID">
+            <button class="btn-connect" type="submit">Connect</button>
+        </form>
+    </header>
 
-    <div style="position:absolute;top:10px;left:10px;background:#000a;padding:10px;">
-        <button id="hostBtn">Host</button>
-        <button id="joinBtn">Join</button>
-        <pre id="log"></pre>
-    </div>
+    <main>
+        <div class="canvas-container">
+            <canvas id="game-canvas"></canvas>
+        </div>
+        <div id="side-log">
+            <div class="log-header">System Log</div>
+            <pre id="log-output"></pre>
+        </div>
+    </main>
 
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

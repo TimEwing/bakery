@@ -1,175 +1,153 @@
-// Constants
+/**
+ * CONFIG & STATE
+ */
+const CONFIG = {
+    FPS: 30,
+    // CELL_SIZE: 40,
+    BG_COLOR: "#0a0a0c",
+    ACCENT_RGB: "0, 255, 157" // Matches CSS --accent
+};
 
-const BACKGROUND = "#101010";
-const FOREGROUND = "#EFEFEF";
-const FPS = 30;
-const HEADERSIZE = 50;
+let midiState = {};
+let peer, conn, myPeerId;
 
-// Globals
+const canvas = document.getElementById("game-canvas");
+const ctx = canvas.getContext("2d");
+const logEl = document.getElementById("log-output");
 
-// --- SHARED MIDI STATE ---
-let midiState = new Map();
+/**
+ * INITIALIZATION
+ */
+function init() {
+    // Responsive Canvas sizing
+    const size = Math.min(window.innerWidth - 350, window.innerHeight - 100, 800);
+    canvas.width = canvas.height = size;
 
-// --- LOGGING ---
-const log = msg => document.getElementById("log").textContent += msg + "\n";
+    setupPeer();
+    setupMidi();
+    animate();
+}
 
-// --- WEBRTC SETUP ---
-let pc;
-let dc;
+/**
+ * LOGGING & UTILS
+ */
+const systemLog = (msg) => {
+    logEl.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+    logEl.scrollTop = logEl.scrollHeight;
+};
 
-function setupPeerConnection(isHost) {
-    pc = new RTCPeerConnection();
+let copyPeerId = () => navigator.clipboard.writeText(myPeerId);
 
-    if (isHost) {
-        dc = pc.createDataChannel("midi");
-        setupDataChannel();
-    } else {
-        pc.ondatachannel = e => {
-            dc = e.channel;
-            setupDataChannel();
-        };
-    }
+/**
+ * WEBRTC LOGIC
+ */
+function setupPeer() {
+    peer = new Peer();
 
-    pc.onicecandidate = e => {
-        if (!e.candidate) {
-            log("Copy this SDP to the other client:\n");
-            log(JSON.stringify(pc.localDescription));
+    peer.on('open', id => {
+        myPeerId = id;
+        document.getElementById("my-id").textContent = id;
+        systemLog("PeerJS Ready.");
+    });
+
+    peer.on('connection', (incomingConn) => {
+        handleConnection(incomingConn);
+    });
+}
+
+function connectToPeer() {
+    const remoteId = document.getElementById("peer-id-input").value;
+    if (!remoteId) return;
+    
+    const newConn = peer.connect(remoteId);
+    handleConnection(newConn);
+}
+
+function handleConnection(connection) {
+    conn = connection;
+    systemLog(`Connecting to: ${conn.peer}...`);
+
+    conn.on('open', () => {
+        systemLog("Connected!");
+        conn.send({ type: 'FULL_STATE', data: midiState });
+    });
+
+    conn.on('data', (payload) => {
+        if (payload.type === 'UPDATE') {
+            midiState[payload.note] = payload.velocity;
+        } else if (payload.type === 'FULL_STATE') {
+            // midiState = payload.data;
+            Object.assign(midiState, payload.data);
         }
-    };
+    });
 }
 
-function setupDataChannel() {
-    dc.onopen = () => log("Data channel open");
-    dc.onmessage = e => {
-        const data = JSON.parse(e.data);
-        Object.assign(midiState, data);
-        log("Received update: " + JSON.stringify(data));
-    };
-}
-
-async function host() {
-    setupPeerConnection(true);
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-}
-
-async function join() {
-    const sdp = prompt("Paste host SDP");
-    setupPeerConnection(false);
-    await pc.setRemoteDescription(JSON.parse(sdp));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-}
-
-function syncMidiState() {
-    if (dc && dc.readyState === "open") {
-        dc.send(JSON.stringify(midiState));
+/**
+ * MIDI LOGIC
+ */
+function setupMidi() {
+    if (navigator.requestMIDIAccess) {
+        navigator.requestMIDIAccess().then(
+            access => {
+                systemLog("MIDI Access Granted.");
+                access.inputs.forEach(input => {
+                    input.onmidimessage = handleMidiMessage;
+                });
+            },
+            () => systemLog("MIDI Access Denied.")
+        );
     }
 }
 
-// Canvas Setup
+function handleMidiMessage(msg) {
+    const [command, note, velocity] = msg.data;
 
-console.log(game)
-const width = Math.max(400, Math.min(window.innerWidth, window.innerHeight));
-game.width = game.height = width;
-const ctx = game.getContext("2d");
-console.log(ctx);
+    // We specifically look for Control Change (176)
+    if (command === 176) {
+        midiState[note] = velocity;
 
-function clear() {
-    ctx.fillStyle = BACKGROUND;
-    ctx.fillRect(0, 0, game.width, game.height);
+        // Sync to peer
+        if (conn && conn.open) {
+            conn.send({ type: 'UPDATE', note, velocity });
+        }
+    }
 }
 
-function rect(x, y, w, h, color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, w, h);
-}
-
-// MIDI State
-
-// let midiState = new Map();
-
-function serializeMidiState() {
-    return JSON.stringify(Array.from(midiState.entries()));
-}
-
-function applyRemoteMidiState(serialized) {
-    const entries = JSON.parse(serialized);
-    midiState = new Map(entries);
-    console.log("Updated midiState from peer:", midiState);
-    draw();
-}
-
-console.log("MIDI State initialized:", midiState);
-
-// Drawing
-
-const noteRectWidth = width / 16;
-const maxRects = Math.floor(width / noteRectWidth);
-
+/**
+ * RENDERING
+ */
 function draw() {
-    clear();
+    // Clear
+    ctx.fillStyle = CONFIG.BG_COLOR;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const sortedNotes = Array.from(midiState.keys()).sort((a, b) => a - b);
+    const sortedNotes = Object.keys(midiState).sort((a, b) => a - b);
+    // const cols = Math.floor(canvas.width / CONFIG.CELL_SIZE);
+    const cols = 8;
+    const cell_size = canvas.width / cols;
+
     sortedNotes.forEach((note, index) => {
-        const x = index % maxRects;
-        const y = Math.floor(index / maxRects);
-        const velocity = midiState.get(note);
-        const noteColor = `rgb(${Math.floor(velocity / 127 * 255)}, ${Math.floor(velocity / 127 * 255)}, 0)`;
-        rect(x * noteRectWidth, HEADERSIZE + y * noteRectWidth, noteRectWidth - 2, noteRectWidth - 2, noteColor);
-    });
+        const x = (index % cols) * cell_size;
+        const y = Math.floor(index / cols) * cell_size;
+        const val = midiState[note] / 127; // Normalized 0-1
 
-    const text = "WebMidi Testbed";
-    ctx.font = "24px Arial";
-    ctx.textBaseline = "top";
-    ctx.fillStyle = FOREGROUND;
-    ctx.fillText(text, width / 2 - ctx.measureText(text).width / 2, 15);
-}
-
-setInterval(draw, 1000 / 30);
-
-// WebMidi Setup
-
-function onMIDISuccess(midiAccess) {
-    console.log("MIDI ready!");
-    const inputs = midiAccess.inputs;
-    console.log(inputs);
-    inputs.forEach((input) => {
-        console.log("Input port : [type:'" + input.type + "'] id:'" + input.id +
-            "' manufacturer:'" + input.manufacturer + "' name:'" + input.name + "' version:'" + input.version + "'");
-        input.onmidimessage = (msg) => getMIDIMessage(input, msg);
+        ctx.fillStyle = `rgba(${CONFIG.ACCENT_RGB}, ${val})`;
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        
+        ctx.fillRect(x + 2, y + 2, cell_size - 4, cell_size - 4);
+        ctx.strokeRect(x + 2, y + 2, cell_size - 4, cell_size - 4);
+        
+        // Note Label inside cell
+        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.font = `${cell_size / 5}px Arial`;
+        ctx.textAlign = "center";
+        ctx.fillText(note, x + cell_size / 2, y + cell_size / 2 + cell_size / 10);
     });
 }
 
-function onMIDIFailure(msg) {
-    console.log("Failed to get MIDI access - " + msg);
+function animate() {
+    draw();
+    requestAnimationFrame(animate);
 }
 
-function getMIDIMessage(input, midiMessage) {
-    const command = midiMessage.data[0];
-    const note = midiMessage.data[1];
-    const velocity = midiMessage.data[2];
-    const inputId = `${input.id} (${input.manufacturer} ${input.name})`;
-    // console.log("MIDI message received " + inputId + ": " + [command, note, velocity]);
-    if (command === 176) { // control change
-        midiState = midiState.set(note, velocity);
-        syncMidiState();
-        // for (const id in dataChannels) {
-        //     const dc = dataChannels[id];
-        //     if (dc && dc.readyState === "open") {
-        //         dc.send(serializeMidiState());
-        //     }
-        // }
-    }
-}
-
-if (navigator.requestMIDIAccess) {
-    navigator.requestMIDIAccess().then(onMIDISuccess, onMIDIFailure);
-} else {
-    console.log("No MIDI support in your browser.");
-}
-
-
-// WebRTC Setup
-document.getElementById("hostBtn").onclick = host;
-document.getElementById("joinBtn").onclick = join;
+window.addEventListener('load', init);
