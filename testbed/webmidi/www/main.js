@@ -3,14 +3,12 @@
  */
 const CONFIG = {
     FPS: 30,
-    // CELL_SIZE: 40,
     BG_COLOR: "#0a0a0c",
     ACCENT_RGB: "0, 255, 157" // Matches CSS --accent
 };
 
 let midiState = {};
-let peer = null;
-let connections = {};
+let mesh = null;
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -20,11 +18,12 @@ const logEl = document.getElementById("log-output");
  * INITIALIZATION
  */
 function init() {
-    // Responsive Canvas sizing
+    // !Responsive Canvas sizing
     const size = Math.min(window.innerWidth - 350, window.innerHeight - 100, 800);
     canvas.width = canvas.height = size;
 
-    setupPeer();
+    mesh = new Mesh(handleIncomingData, sendFullState, systemLog, true);
+    mesh.init();
     setupMidi();
     animate();
 }
@@ -37,94 +36,10 @@ const systemLog = (msg) => {
     logEl.scrollTop = logEl.scrollHeight;
 };
 
-let copyPeerId = () => null === peer ? null : navigator.clipboard.writeText(peer.id);
+let copyPeerId = () => !mesh.ready() ? null : navigator.clipboard.writeText(mesh.peerId());
+let connectToPeer = () => mesh.connectToPeer(document.getElementById("peer-id-input").value);
 
-/**
- * BACKEND PEER_ANNOUNCE LOGIC
- */
-async function announceToServer() {
-    if (!peer || !peer.id) return;
-    
-    try {
-        const response = await fetch('/announce', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ peerId: peer.id })
-        });
-        const data = await response.json();
-        
-        // Connect to returned peers
-        data.peers.forEach(id => {
-            if (id !== peer.id && !connections[id]) {
-                systemLog(`Discovered peer from server: ${id}, connecting...`);
-                connectToPeer(id);
-            }
-        });
-    } catch (error) {
-        systemLog(`Error announcing to server: ${error}`);
-    }
-}
-
-/**
- * WEBRTC MESH LOGIC
- */
-function setupPeer() {
-    peer = new Peer();
-
-    peer.on('open', id => {
-        document.getElementById("my-id").textContent = id;
-        systemLog(`My Peer ID: ${id}`);
-        
-        // Announce to server every 10 seconds
-        announceToServer();
-        setInterval(announceToServer, 10000);
-    });
-
-    peer.on('connection', (incomingConn) => {
-        registerConnection(incomingConn);
-    });
-}
-
-function connectToPeer(targetId = null) {
-    const remoteId = targetId || document.getElementById("peer-id-input").value;
-    if (!remoteId || connections[remoteId] || remoteId === peer.id) return;
-    
-    const newConn = peer.connect(remoteId);
-    registerConnection(newConn);
-}
-
-function registerConnection(conn) {
-    systemLog(`Connecting to: ${conn.peer}...`);
-
-    conn.on('open', () => {
-        systemLog(`Connected to: ${conn.peer}`);
-        connections[conn.peer] = conn;
-        connections[conn.peer].reconnects = 0;
-        
-        // Send current full state
-        conn.send({ type: 'FULL_STATE', data: midiState });
-        
-        // Share peer connections (mesh)
-        const peerList = Object.keys(connections).concat([peer.id]);
-        conn.send({ type: 'PEER_LIST', data: peerList });
-    });
-
-    conn.on('data', (payload) => {
-        handleIncomingData(payload, conn.peer);
-    });
-    
-    conn.on('close', () => {
-        systemLog(`Connection closed: ${conn.peer}`);
-        delete connections[conn.peer];
-    });
-    
-    conn.on('error', (err) => {
-        systemLog(`Connection error with ${conn.peer}: ${err}`);
-        delete connections[conn.peer];
-    });
-}
-
-function handleIncomingData(payload, senderId) {
+function handleIncomingData(senderId, payload) {
     switch (payload.type) {
         case 'UPDATE':
             midiState[payload.note] = payload.velocity;
@@ -132,29 +47,13 @@ function handleIncomingData(payload, senderId) {
         case 'FULL_STATE':
             Object.assign(midiState, payload.data);
             break;
-        case 'PEER_LIST':
-            systemLog(`Received peer list from ${senderId}: ${payload.data.join(", ")}`);
-            payload.data.forEach(id => {
-                if (id !== peer.id && !connections[id]) {
-                    systemLog(`Discovered peer: ${id}, connecting...`);
-                    connectToPeer(id);
-                }
-            });
-            break;
         default:
             systemLog(`Unknown payload type: ${payload.type} from ${senderId}`);
     }
 }
 
-/**
- * BROADCAST LOGIC
- */
-function broadcast(payload) {
-    Object.values(connections).forEach(conn => {
-        if (conn.open) {
-            conn.send(payload);
-        }
-    });
+function sendFullState(peerId) {
+    mesh.sendToPeer(peerId, { type: 'FULL_STATE', data: midiState });
 }
 
 /**
@@ -182,7 +81,8 @@ function handleMidiMessage(msg) {
         midiState[note] = velocity;
 
         // Sync to peers
-        broadcast({ type: 'UPDATE', note, velocity });
+        // broadcast({ type: 'UPDATE', note, velocity });
+        mesh.broadcast({ type: 'UPDATE', note, velocity });
     }
 }
 
@@ -219,6 +119,10 @@ function draw() {
 }
 
 function animate() {
+    // Update PeerID display
+    document.getElementById("my-id").textContent = mesh.peerId() ?? "Not connected";
+    // Update connection count
+    document.getElementById("num-connections").textContent = mesh.numConnections();
     draw();
     requestAnimationFrame(animate);
 }
@@ -228,162 +132,6 @@ window.addEventListener('load', init);
 // API Gererator curry function
 // const Message = (myId, 
 
-// class Mesh {
-//     constructor(dataCallback, logFunc, maxAgeMs = 30000) {
-//         this.dataCallback = dataCallback;   // Function to handle incoming data
-//         this.logFunc = logFunc;             // Logging function
-//         this.maxAgeMs = maxAgeMs;           // Max age for peer connections
-//         this.peer = null;                   // PeerJS Peer instance
-//         this.connections = {};              // Active connections (peerId -> {conn, peers, lastHeartbeat})
-        
-//         this.announceInterval = null;      // Interval ID for announcing to server
-//     }
-    
-//     ready() {
-//         return this.peer && this.peer.id;
-//     }
-    
-//     peerId() {
-//         return this.peer ? this.peer.id : null;
-//     }
-    
-//     numConnections() {
-//         return Object.keys(this.connections).length;
-//     }
-    
-//     // Initialize PeerJS and setup event handlers
-//     init() {
-//         this.close();
-//         this.peer = new Peer();
-
-//         // New remote peer connection
-//         this.peer.on('open', id => {
-//             this.logFunc(`My Peer ID: ${id}`);
-            
-//             // Announce to server every 10 seconds
-//             if (this.announceInterval) clearInterval(this.announceInterval);
-//             this.announceToServer();
-//             this.announceInterval = setInterval(() => this.announceToServer(), 10000);
-//         });
-
-//         this.peer.on('close', () => {
-//             this.logFunc(`Peer connection closed (Self).`);
-//             this.close();
-//             this.init();
-//         });
-        
-//         this.peer.on('disconnected', () => {
-//             this.logFunc(`Peer disconnected (Self).`);
-//             this.reconnect();
-//         });
-        
-//         this.peer.on('error', (err) => {
-//             this.logFunc(`Peer error: ${err}`);
-//             // switch (err.type) {
-//             //     case 'network':
-//             //     case 'disconnected':
-//             //     cose 'socket-closed'
-//             this.close();
-//             this.init();
-//             //         break;
-//             //     default:
-//             //         break;
-//             // }
-//         });
-
-//         // Incoming remote peer connection
-//         this.peer.on('connection',
-//             incomingConn => this.registerConnection(incomingConn)
-//         );
-//     }
-    
-//     close() {
-//         // Close all connections
-//         Object.keys(this.connections).forEach(
-//             peerId => this.closePeerConnection(peerId)
-//         );
-//         if (this.peer) {
-//             this.peer.destroy();
-//             this.peer = null;
-//         }
-//         if (this.announceInterval) {
-//             clearInterval(this.announceInterval);
-//             this.announceInterval = null;
-//         }
-//     }
-    
-//     // peerValid(peerId) {
-//     //     return peerId && this.connections[peerId] !== undefined;
-//     // }
-    
-//     // peerConnected(peerId) {
-//     //     return this.peerValid(peerId) && this.connections[peerId].
-    
-//     connectToPeer(targetId) {
-//         if (!targetId || this.connections[targetId] || targetId === this.peer.id) return;
-//         this.logFunc(`Connecting to peer: ${targetId}...`);
-//         const newConn = this.peer.connect(targetId);
-//         this.registerConnection(newConn);
-//     }
-    
-//     // reconnectPeerConnection(peerId) {
-//     //     this.logFunc(`Reconnecting to peer: ${peerId}...`);
-//     //     if (this.connections[peerId]) {
-//     //         this.connections[peerId].reconnect();
-//     //     } else {
-//     //         this.connectToPeer(peerId);
-//     //     }
-        
-//     closePeerConnection(peerId) {
-//         if (this.connections[peerId] && this.connections[peerId].conn) {
-//             this.connections[peerId].conn.close();
-//             this.connections[peerId].conn.destroy();
-//             this.connections[peerId].conn = null;
-//         }
-//     }
-    
-//     deletePeerConnection(peerId) {
-//         this.closePeerConnection(peerId);
-//         delete this.connections[peerId];
-//     }
-    
-//     registerConnection(conn) {
-//         conn.on('open', () => {
-//             this.logFunc(`Connected to: ${conn.peer}`);
-//             this.connections[conn.peer] = {
-//                 conn: conn,
-//                 peers: [],
-//                 lastHeartbeat: Date.now(),
-//             };
-//         });
-        
-//         conn.on('data', (payload) => {
-//             this.connections[conn.peer].lastHeartbeat = Date.now();
-//             this.dataCallback(conn.peer, payload);
-//         });
-        
-//         conn.on('disconnected', () => {
-//             this.logFunc(`Connection disconnected: ${conn.peer}`);
-//             // Attempt to reconnect
-//             conn.reconnect();
-//         });
-        
-//         conn.on('close', () => {
-//             this.logFunc(`Connection closed: ${conn.peer}`);
-//             this.deletePeerConnection(conn.peer);
-//         });
-        
-//         conn.on('error', (err) => {
-//             this.logFunc(`Connection error with ${conn.peer}: ${err}`);
-//             this.deletePeerConnection(conn.peer);
-//         });
-//     }
-    
-//     // handleIncomingData(senderId, payload) {
-//     //     this.connections[senderId].lastHeartbeat = Date.now();
-//     //     this.dataCallback(senderId, payload);
-//     // }
-// }
 
 
 

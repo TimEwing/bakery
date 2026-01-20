@@ -107,6 +107,12 @@ main {
     border-bottom: 1px solid #333;
 }
 
+.log-header #num-connections {
+    float: right;
+    font-weight: bold;
+    color: var(--accent);
+}
+
 #log-output {
     padding: 10px;
     margin: 0;
