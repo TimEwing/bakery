@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+
+<body>
+    <p>Your ID: <b id="myid">...</b></p>
+    <input id="peerid" placeholder="Enter peer ID">
+    <button onclick="connect()">Connect</button>
+    <pre id="log"></pre>
+
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script>
+        const log = msg => document.getElementById("log").textContent += msg + "\n";
+
+        const peer = new Peer(); // uses free public PeerJS cloud server
+        let conn;
+
+        peer.on("open", id => document.getElementById("myid").textContent = id);
+
+        peer.on("connection", c => {
+            conn = c;
+            log("Connected!");
+            conn.on("data", d => {
+                log("Received: " + d);
+                conn.send("Hello, Wold!");
+            });
+        });
+
+        function connect() {
+            conn = peer.connect(document.getElementById("peerid").value);
+            conn.on("open", () => {
+                log("Connected!");
+                conn.on("data", d => {
+                    log("Received: " + d);
+                    conn.send("Hello, Wold!");
+                });
+                conn.send("Hello, Wold!");
+            });
+        }
+    </script>
+</body>
+
+</html>
