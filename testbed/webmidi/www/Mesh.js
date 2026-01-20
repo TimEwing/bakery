@@ -7,6 +7,7 @@ class Mesh {
         this.peer = null;
         this.connections = {}; 
         this._reconnectTimer = null;
+        this._isZombie = false; // Track zombie state to avoid duplicate logs
     }
 
     ready() {
@@ -24,7 +25,6 @@ class Mesh {
     // --- Initialization ---
 
     init() {
-        // Only destroy if we are truly starting fresh (e.g. page load)
         if (this.peer) this.peer.destroy();
 
         this.peer = new Peer({
@@ -32,7 +32,7 @@ class Mesh {
             port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
             path: '/peerjs/mesh-signaling',
             secure: window.location.protocol === 'https:',
-            debug: 1,
+            debug: 1, // Reduced debug level to avoid console noise
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -47,7 +47,8 @@ class Mesh {
     setupPeerEvents() {
         this.peer.on('open', (id) => {
             this.logFunc(`My Peer ID: ${id}`);
-            // If we were retrying, stop the loop
+            this._isZombie = false; 
+
             if (this._reconnectTimer) {
                 clearTimeout(this._reconnectTimer);
                 this._reconnectTimer = null;
@@ -58,42 +59,57 @@ class Mesh {
         this.peer.on('connection', (conn) => this.registerConnection(conn));
 
         this.peer.on('disconnected', () => {
-            this.logFunc("Signaling lost. Mesh running in 'Zombie' mode.");
-            this.attemptReconnect();
+            this.enterZombieMode('disconnected');
         });
 
         this.peer.on('error', (err) => {
-            if (err.type === 'peer-unavailable') return; // Benign
+            if (err.type === 'peer-unavailable') return; 
             
-            this.logFunc(`Peer error: ${err.type}`);
-
-            // Only fatal errors should trigger a full destruction
-            if (err.type === 'browser-incompatible') {
-                this.logFunc("Fatal: Browser incompatible.");
-            } else if (err.type === 'network' || err.type === 'socket-closed') {
-                // These are usually temporary
-                this.attemptReconnect();
+            // If the network drops, PeerJS might throw 'network' before 'disconnected'
+            if (['network', 'socket-closed', 'server-error'].includes(err.type)) {
+                this.enterZombieMode(err.type);
+                return;
             }
+
+            this.logFunc(`Peer Error: ${err.type}`);
         });
     }
 
+    enterZombieMode(reason) {
+        if (this._isZombie) return;
+        
+        this._isZombie = true;
+        this.logFunc(`Signaling lost (${reason}). Mesh running in 'Zombie' mode.`);
+        
+        // CRITICAL FIX: Explicitly disconnect to reset PeerJS internal state
+        // This allows .reconnect() to work without throwing the 'not disconnected' error
+        if (!this.peer.disconnected) {
+            this.peer.disconnect();
+        }
+
+        this.attemptReconnect();
+    }
+
     attemptReconnect() {
-        // If already destroyed, we can't reconnect. We must init.
-        if (this.peer.destroyed) {
-            this.init();
+        if (!this.peer || this.peer.destroyed) {
+            this.init(); 
             return;
         }
 
-        // Avoid multiple timers
         if (this._reconnectTimer) return;
 
-        this.logFunc("Attempting to reconnect to signaling...");
-        this.peer.reconnect();
+        // Perform the reconnection
+        try {
+            this.logFunc("Attempting to reconnect to signaling...");
+            this.peer.reconnect();
+        } catch (e) {
+            console.error("Reconnection call failed:", e);
+        }
 
-        // If reconnect fails immediately or times out, try again in 5s
+        // Retry loop
         this._reconnectTimer = setTimeout(() => {
             this._reconnectTimer = null;
-            if (this.peer.disconnected && !this.peer.destroyed) {
+            if (this.peer.disconnected) {
                 this.attemptReconnect();
             }
         }, 5000);
@@ -104,10 +120,9 @@ class Mesh {
     connectToPeer(targetId) {
         if (!targetId || this.connections[targetId] || targetId === this.peer.id) return;
         
-        // We can only initiate NEW connections if we have signaling
         if (this.peer.disconnected) {
-            this.logFunc(`Cannot connect to ${targetId}: Signaling down.`);
-            return;
+            // We can't connect to NEW people, but we are still alive
+            return; 
         }
 
         const conn = this.peer.connect(targetId);
@@ -120,8 +135,6 @@ class Mesh {
         conn.on('open', () => {
             this.connections[conn.peer] = { conn };
             this.logFunc(`Connected to: ${conn.peer}`);
-
-            // Gossip: Share known peers to help build mesh without server
             this.broadcastPeerList();
             this.onOpenConnection(conn.peer);
         });
@@ -129,12 +142,12 @@ class Mesh {
         conn.on('data', (msg) => this.handleIncomingData(conn.peer, msg));
 
         conn.on('close', () => {
-            this.logFunc(`Connection closed: ${conn.peer}`);
+            this.logFunc(`Peer Left: ${conn.peer}`);
             delete this.connections[conn.peer];
         });
 
         conn.on('error', (err) => {
-            this.logFunc(`Conn error ${conn.peer}: ${err}`);
+            this.logFunc(`Connection Error (${conn.peer}): ${err}`);
             delete this.connections[conn.peer];
         });
     }
@@ -150,8 +163,7 @@ class Mesh {
                 this.handleIncomingData('SERVER', msg);
             }
         } catch (error) {
-            // Server might be down, but that's okay for the Mesh
-            // this.logFunc("Could not fetch peer list from server.");
+            // Server down - silence is golden here as we have Zombie mode logs
         }
     }
 
@@ -160,7 +172,6 @@ class Mesh {
 
         switch (type) {
             case 'PEER_LIST':
-                // Auto-connect to new peers
                 if (Array.isArray(data)) {
                     data.forEach(id => {
                         if (id !== this.peer.id && !this.connections[id]) {
